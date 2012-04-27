@@ -1,0 +1,81 @@
+------------------------------------------------------------------------------------------------------
+PROBLEM:-1
+------------------------------------------------------------------------------------------------------
+gcc: error: elf_i386: No such file or directory
+  OBJCOPY arch/x86/vdso/vdso32-int80.so
+objcopy: 'arch/x86/vdso/vdso32-int80.so.dbg': No such file
+make[2]: *** [arch/x86/vdso/vdso32-int80.so] Error 1
+make[1]: *** [arch/x86/vdso] Error 2
+make: *** [arch/x86] Error 2
+------------------------------------------------------------------------------------------------------
+SOLUTION:
+----------
+The problem is that gcc 4.6 doesn't support anymore linker-style architecture options.  
+Apply the following changes to solve the problem :
+
+In arch/x86/vdso/Makefile :
+
+replace "-m elf_x86_64" by "-m64" on the line starting with  VDSO_LDFLAGS_vdso.lds
+replace "-m elf_i386" by "-m32" on the line starting with  VDSO_LDFLAGS_vdso32.lds
+------------------------------------------------------------------------------------------------------
+PROBLEM:-2
+------------------------------------------------------------------------------------------------------
+In file included from drivers/net/igbvf/ethtool.c:36:0:
+drivers/net/igbvf/igbvf.h: At top level:
+drivers/net/igbvf/igbvf.h:129:15: error: duplicate member ‘page’
+make[3]: *** [drivers/net/igbvf/ethtool.o] Error 1
+make[2]: *** [drivers/net/igbvf] Error 2
+make[1]: *** [drivers/net] Error 2
+make: *** [drivers] Error 2
+------------------------------------------------------------------------------------------------------
+SOLUTION:
+---------
+struct igbvf_buffer {
+        dma_addr_t dma;
+        struct sk_buff *skb;
+        union {
+                /* Tx */
+                struct {
+                        unsigned long time_stamp;
+                        u16 length;
+                        u16 next_to_watch;
+                        u16 mapped_as_page;
+                };
+                /* Rx */
+                struct {
+                        struct page *page; <--------------- No 1
+                        u64 page_dma;
+                        unsigned int page_offset;
+                };
+        };
+        struct page *page;         <------------ No 2
+};
+
+Hmm conflict of a member with a transparent union.
+Maybe older gccs didn't catch that. But it looks very broken
+
+Comment second pointer.
+
+------------------------------------------------------------------------------------------------------
+PROBLEM 3: Similar to Problem-2
+-------------------------------------------------------------------------------
+In file included from drivers/scsi/pmcraid.c:57:0:
+drivers/scsi/pmcraid.h: At top level:
+drivers/scsi/pmcraid.h:601:8: error: duplicate member ‘sense_buffer’
+drivers/scsi/pmcraid.c: In function ‘pmcraid_abort_cmd’:
+drivers/scsi/pmcraid.c:2940:33: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+drivers/scsi/pmcraid.c: In function ‘pmcraid_ioctl_passthrough’:
+drivers/scsi/pmcraid.c:3745:5: warning: variable ‘access’ set but not used [-Wunused-but-set-variable]
+drivers/scsi/pmcraid.c: In function ‘pmcraid_check_ioctl_buffer’:
+drivers/scsi/pmcraid.c:4052:6: warning: variable ‘access’ set but not used [-Wunused-but-set-variable]
+make[3]: *** [drivers/scsi/pmcraid.o] Error 1
+make[2]: *** [drivers/scsi] Error 2
+make[1]: *** [drivers] Error 2
+make[1]: Leaving directory `/home/ashish/litmus-rt'
+make: *** [debian/stamp/build/kernel] Error 2
+-------------------------------------------------------------------------------
+SOLUTION:
+----------
+Comment drivers/scsi/pmcraid.h:571
+-------------------------------------------------------------------------------
+
