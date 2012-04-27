@@ -20,4 +20,11 @@
 #define __NR_release_ts		__LSC(12)
 #define __NR_null_call		__LSC(13)
 
-#define NR_litmus_syscalls 14
+/*Our syscalls for dependent tasks*/
+#define __NR_init_dep_task  __LSC(14) // for litmus data structure
+#define __NR_set_main_task_pid __LSC(15)  // for struct task_struct
+#define __NR_init_dep_subtask __LSC(16)	// for litmus data structure
+#define __NR_add_parent_to_subtask __LSC(17)
+#define __NR_exit_dep_task __LSC(18)
+
+#define NR_litmus_syscalls 19

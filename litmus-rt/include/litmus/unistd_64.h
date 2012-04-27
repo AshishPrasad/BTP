@@ -33,5 +33,15 @@ __SYSCALL(__NR_wait_for_ts_release, sys_wait_for_ts_release)
 __SYSCALL(__NR_release_ts, sys_release_ts)
 #define __NR_null_call				__LSC(13)
 __SYSCALL(__NR_null_call, sys_null_call)
+#define __NR_init_dep_task			__LSC(14)
+__SYSCALL(__NR_init_dep_task, sys_init_dep_task)
+#define __NR_set_main_task_pid		__LSC(15)
+__SYSCALL(__NR_set_main_task_pid, sys_set_main_task_pid)
+#define __NR_init_dep_subtask		__LSC(16)
+__SYSCALL(__NR_init_dep_subtask, sys_init_dep_subtask)
+#define __NR_add_parent_to_subtask	__LSC(17)
+__SYSCALL(__NR_add_parent_to_subtask, sys_add_parent_to_subtask)
+#define __NR_exit_dep_task			__LSC(18)
+__SYSCALL(__NR_exit_dep_task, sys_exit_dep_task)
+#define NR_litmus_syscalls 19
 
-#define NR_litmus_syscalls 14

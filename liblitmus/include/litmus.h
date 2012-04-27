@@ -26,10 +26,23 @@ int be_migrate_to(int target_cpu);
 int set_rt_task_param(pid_t pid, struct rt_task* param);
 int get_rt_task_param(pid_t pid, struct rt_task* param);
 
+// Syscalls For Dependent Tasks only
+int init_dep_task(pid_t main_task_pid);
+int set_main_task_pid(pid_t subtask_pid, pid_t main_task_pid);
+int init_dep_subtask(pid_t subtask_pid);
+int add_parent_to_subtask_in_main_task(pid_t parent_pid, pid_t subtask_pid, pid_t main_task_pid);
+int exit_dep_task(pid_t main_task_pid);
+
 /* setup helper */
 
 /* times are given in ms */
 int sporadic_task(
+		lt_t e, lt_t p, lt_t phase,
+		int partition, task_class_t cls,
+		budget_policy_t budget_policy, int set_cpu_set);
+
+/* times are given in ms */
+int sporadic_dependent_task(
 		lt_t e, lt_t p, lt_t phase,
 		int partition, task_class_t cls,
 		budget_policy_t budget_policy, int set_cpu_set);
@@ -40,9 +53,17 @@ int sporadic_task_ns(
 		int cpu, task_class_t cls,
 		budget_policy_t budget_policy, int set_cpu_set);
 
+/* times are given in ns */
+int generic_sporadic_task_ns(
+		lt_t e, lt_t p, lt_t phase,
+		int cpu, task_class_t cls,
+		budget_policy_t budget_policy, int set_cpu_set, int dependent);
+
 /* budget enforcement off by default in these macros */
 #define sporadic_global(e, p) \
 	sporadic_task(e, p, 0, 0, RT_CLASS_SOFT, NO_ENFORCEMENT, 0)
+#define sporadic_global_dependent(e, p) \
+	sporadic_dependent_task(e, p, 0, 0, RT_CLASS_SOFT, NO_ENFORCEMENT, 0)
 #define sporadic_partitioned(e, p, cpu) \
 	sporadic_task(e, p, 0, cpu, RT_CLASS_SOFT, NO_ENFORCEMENT, 1)
 

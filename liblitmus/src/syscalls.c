@@ -11,6 +11,7 @@
 //#include <sys/types.h>
 
 #include "litmus.h"
+#include <stdio.h>
 
 /*	Syscall stub for setting RT mode and scheduling options */
 
@@ -98,3 +99,36 @@ int null_call(cycles_t *timestamp)
 {
 	return syscall(__NR_null_call, timestamp);
 }
+
+/********************************Our Syscalls***************************************/
+// Syscall to intialize task pid at kernel
+int init_dep_task(pid_t main_task_pid)
+{
+	return syscall(__NR_init_dep_task, main_task_pid);
+}
+
+// Syscall to link main thread task to the subtask at kernel
+int set_main_task_pid(pid_t subtask_pid, pid_t main_task_pid)
+{
+	return syscall(__NR_set_main_task_pid, subtask_pid, main_task_pid);
+}
+
+// Syscall to add subtask to dependent task list
+int init_dep_subtask(pid_t subtask_pid)
+{
+	return syscall(__NR_init_dep_subtask, subtask_pid);
+}
+
+// Syscall to specify parent constraint to a subtask in main task
+int add_parent_to_subtask_in_main_task(pid_t parent_pid, pid_t subtask_pid, pid_t main_task_pid)
+{
+	return syscall(__NR_add_parent_to_subtask, parent_pid, subtask_pid, main_task_pid);
+}
+
+// Syscall to exit task pid
+int exit_dep_task(pid_t main_task_pid)
+{
+	return syscall(__NR_exit_dep_task, main_task_pid);
+}
+
+/*********************************************************************************/

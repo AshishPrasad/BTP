@@ -45,13 +45,33 @@ int sporadic_task(lt_t e, lt_t p, lt_t phase,
 		  int cpu, task_class_t cls,
 		  budget_policy_t budget_policy, int set_cpu_set)
 {
-	return sporadic_task_ns(e * NS_PER_MS, p * NS_PER_MS, phase * NS_PER_MS,
-				cpu, cls, budget_policy, set_cpu_set);
+	return generic_sporadic_task_ns(e * NS_PER_MS, p * NS_PER_MS, phase * NS_PER_MS,
+				cpu, cls, budget_policy, set_cpu_set, 0);
 }
 
-int sporadic_task_ns(lt_t e, lt_t p, lt_t phase,
+int sporadic_dependent_task(
+		lt_t e, lt_t p, lt_t phase,
+		int cpu, task_class_t cls,
+		budget_policy_t budget_policy, int set_cpu_set)
+{
+	return generic_sporadic_task_ns(e * NS_PER_MS, p * NS_PER_MS, phase * NS_PER_MS,
+					cpu, cls, budget_policy, set_cpu_set, 1);
+}
+
+/* times are given in ns */
+int sporadic_task_ns(
+		lt_t e, lt_t p, lt_t phase,
+		int cpu, task_class_t cls,
+		budget_policy_t budget_policy, int set_cpu_set)
+{
+	return generic_sporadic_task_ns(e, p, phase,
+			cpu, cls, budget_policy, set_cpu_set, 0);
+}
+
+
+int generic_sporadic_task_ns(lt_t e, lt_t p, lt_t phase,
 			int cpu, task_class_t cls,
-			budget_policy_t budget_policy, int set_cpu_set)
+			budget_policy_t budget_policy, int set_cpu_set, int dependent)
 {
 	struct rt_task param;
 	int ret;
@@ -63,6 +83,7 @@ int sporadic_task_ns(lt_t e, lt_t p, lt_t phase,
 
 	param.exec_cost = e;
 	param.period    = p;
+	param.subtask_period = p;
 	param.cpu       = cpu;
 	param.cls       = cls;
 	param.phase	= phase;

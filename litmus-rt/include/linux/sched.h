@@ -1174,6 +1174,9 @@ struct task_struct {
 
 	int lock_depth;		/* BKL lock depth */
 
+	// Main Task PID
+	pid_t main_task_pid;
+
 #ifdef CONFIG_SMP
 #ifdef __ARCH_WANT_UNLOCKED_CTXSW
 	int oncpu;

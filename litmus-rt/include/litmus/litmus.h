@@ -43,16 +43,17 @@ void litmus_exit_task(struct task_struct *tsk);
 #define tsk_rt(t)		(&(t)->rt_param)
 
 /*	Realtime utility macros */
-#define get_rt_flags(t)		(tsk_rt(t)->flags)
-#define set_rt_flags(t,f) 	(tsk_rt(t)->flags=(f))
-#define get_exec_cost(t)  	(tsk_rt(t)->task_params.exec_cost)
-#define get_exec_time(t)	(tsk_rt(t)->job_params.exec_time)
-#define get_rt_period(t)	(tsk_rt(t)->task_params.period)
-#define get_rt_phase(t)		(tsk_rt(t)->task_params.phase)
-#define get_partition(t) 	(tsk_rt(t)->task_params.cpu)
-#define get_deadline(t)		(tsk_rt(t)->job_params.deadline)
-#define get_release(t)		(tsk_rt(t)->job_params.release)
-#define get_class(t)		(tsk_rt(t)->task_params.cls)
+#define get_rt_flags(t)				(tsk_rt(t)->flags)
+#define set_rt_flags(t,f) 			(tsk_rt(t)->flags=(f))
+#define get_exec_cost(t)  			(tsk_rt(t)->task_params.exec_cost)
+#define get_exec_time(t)			(tsk_rt(t)->job_params.exec_time)
+#define get_rt_period(t)			(tsk_rt(t)->task_params.period)
+#define get_rt_subtask_period(t) 	(tsk_rt(t)->task_params.subtask_period)
+#define get_rt_phase(t)				(tsk_rt(t)->task_params.phase)
+#define get_partition(t) 			(tsk_rt(t)->task_params.cpu)
+#define get_deadline(t)				(tsk_rt(t)->job_params.deadline)
+#define get_release(t)				(tsk_rt(t)->job_params.release)
+#define get_class(t)				(tsk_rt(t)->task_params.cls)
 
 inline static int budget_exhausted(struct task_struct* t)
 {

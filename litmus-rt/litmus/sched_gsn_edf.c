@@ -19,7 +19,9 @@
 #include <litmus/sched_trace.h>
 
 #include <litmus/preempt.h>
-
+#include <litmus/MyRTTaskList.h>
+#include <linux/list.h>
+#include <linux/slab.h>
 #include <litmus/bheap.h>
 
 #include <linux/module.h>
@@ -110,6 +112,48 @@ static struct bheap      gsnedf_cpu_heap;
 static rt_domain_t gsnedf;
 #define gsnedf_lock (gsnedf.ready_lock)
 
+/* Schedulable Dependent SubTask List */
+struct list_head sched_dep_subtask_list;
+
+/* Waiting Dependent SubTask List */
+struct list_head dep_subtask_wait_list;
+
+// Adding dependent subtask to wait list
+static void AddToDepSubtaskWaitList(struct task_struct* task) {
+	printk("Adding independent subtask: %d to wait queue\n",task->pid);
+	struct task_struct_node* waiting_task = kmalloc(sizeof(struct task_struct_node), GFP_KERNEL);
+	waiting_task->subtask = task;
+	INIT_LIST_HEAD(&waiting_task->ptr);
+	list_add_tail(&waiting_task->ptr, &dep_subtask_wait_list);
+}
+
+// Caller must hold gsnedf lock
+static void transferDepSubTaskFromWaitListToReadyQueue() {
+	struct task_struct_node* waiting_subtask;
+	struct task_struct_node* prev_subtask = NULL;
+	list_for_each_entry(waiting_subtask, &dep_subtask_wait_list, ptr) {
+		if (schedulableSubTask(waiting_subtask->subtask, &sched_dep_subtask_list)) {
+			printk("Transfering subtask: %d from wait queue to ready_queue.\n", waiting_subtask->subtask->pid);
+			if (prev_subtask != NULL) {
+				list_del(&prev_subtask->ptr);
+				prev_subtask = NULL;
+			}
+
+			// Sanity Check
+			if (!is_queued(waiting_subtask->subtask)) {
+				__add_ready(&gsnedf, waiting_subtask->subtask);
+			}
+
+			prev_subtask = waiting_subtask;
+		}
+	}
+
+	// For last element
+	if (prev_subtask != NULL) {
+		list_del(&prev_subtask->ptr);
+		prev_subtask = NULL;
+	}
+}
 
 /* Uncomment this if you want to see all scheduling decisions in the
  * TRACE() log.
@@ -244,8 +288,15 @@ static noinline void requeue(struct task_struct* task)
 	/* sanity check before insertion */
 	BUG_ON(is_queued(task));
 
-	if (is_released(task, litmus_clock()))
-		__add_ready(&gsnedf, task);
+	/* Only if a dependent subtask is schedulable pass it to ready queue.*/
+	if (is_released(task, litmus_clock())) {
+		if (schedulableSubTask(task, &sched_dep_subtask_list)) {
+			__add_ready(&gsnedf, task);
+		}
+		else {
+			AddToDepSubtaskWaitList(task);
+		}
+	}
 	else {
 		/* it has got to wait */
 		add_release(&gsnedf, task);
@@ -277,6 +328,13 @@ static noinline void gsnedf_job_arrival(struct task_struct* task)
 {
 	BUG_ON(!task);
 
+	/* Obtain Schedulable Subtasks */
+	if (!independentSubTask(task)) {
+		printk("Subtask: %d arrived.\n", task->pid);
+		obtainSchedulableSubtaskList(&sched_dep_subtask_list);
+		traverseSchedulableSubtaskList(&sched_dep_subtask_list);
+	}
+
 	requeue(task);
 	check_for_preemptions();
 }
@@ -293,6 +351,26 @@ static void gsnedf_release_jobs(rt_domain_t* rt, struct bheap* tasks)
 	raw_spin_unlock_irqrestore(&gsnedf_lock, flags);
 }
 
+/* Function to
+ * 1. delete the subtask from dependent subtasks data structure
+ * 2. refresh the schedulable task list
+ * 3. transfer schedulable subtasks from release wait list to ready queue
+ *
+ * Caller holds the gsnedf lock
+ * */
+static void delAndUpdateDepSubtaskStructures(struct task_struct* t) {
+	printk("Deleting subtask: %d @delAndUpdateDepSubtaskStructures.\n", t->pid);
+
+	if (deleteSubtaskFromDepTaskList(t)) {
+
+		printk("Refreshing dependent task structure (subtask: %d) @delAndUpdateDepSubtaskStructures.\n", t->pid);
+		obtainSchedulableSubtaskList(&sched_dep_subtask_list);
+		traverseSchedulableSubtaskList(&sched_dep_subtask_list);
+
+		transferDepSubTaskFromWaitListToReadyQueue();
+	}
+}
+
 /* caller holds gsnedf_lock */
 static noinline void job_completion(struct task_struct *t, int forced)
 {
@@ -301,6 +379,12 @@ static noinline void job_completion(struct task_struct *t, int forced)
 	sched_trace_task_completion(t, forced);
 
 	TRACE_TASK(t, "job_completion().\n");
+
+	/* Refresh schedulable subtask list for dependent tasks and transfer the tasks which are waiting in the release queue to ready queue */
+	if (!independentSubTask(t)) {
+		printk("Subtask: %d completed.\n", t->pid);
+//		delAndUpdateDepSubtaskStructures(t);
+	}
 
 	/* set flags */
 	set_rt_flags(t, RT_F_SLEEP);
@@ -354,7 +438,7 @@ static void gsnedf_tick(struct task_struct* t)
  *
  * The following assertions for the scheduled task could hold:
  *
- *      - !is_running(scheduled)        // the job blocks
+ *  - !is_running(scheduled)        // the job blocks
  *	- scheduled->timeslice == 0	// the job completed (forcefully)
  *	- get_rt_flag() == RT_F_SLEEP	// the job completed (by syscall)
  * 	- linked != scheduled		// we need to reschedule (for any reason)
@@ -366,7 +450,7 @@ static void gsnedf_tick(struct task_struct* t)
 static struct task_struct* gsnedf_schedule(struct task_struct * prev)
 {
 	cpu_entry_t* entry = &__get_cpu_var(gsnedf_cpu_entries);
-	int out_of_time, sleep, preempt, np, exists, blocks;
+	int out_of_time, sleep, preempt, np, exists, blocks;//, schedulable;
 	struct task_struct* next = NULL;
 
 #ifdef CONFIG_RELEASE_MASTER
@@ -394,6 +478,8 @@ static struct task_struct* gsnedf_schedule(struct task_struct * prev)
 	sleep	    = exists && get_rt_flags(entry->scheduled) == RT_F_SLEEP;
 	preempt     = entry->scheduled != entry->linked;
 
+//	schedulable = schedulableSubTask(entry->scheduled, &sched_dep_subtask_list);
+
 #ifdef WANT_ALL_SCHED_EVENTS
 	TRACE_TASK(prev, "invoked gsnedf_schedule.\n");
 #endif
@@ -413,6 +499,11 @@ static struct task_struct* gsnedf_schedule(struct task_struct * prev)
 	 */
 	if (blocks)
 		unlink(entry->scheduled);
+
+//	if (!schedulable) {
+//		unlink(entry->scheduled);
+//		AddToDepSubtaskWaitList(entry->scheduled);
+//	}
 
 	/* Request a sys_exit_np() call if we would like to preempt but cannot.
 	 * We need to make sure to update the link structure anyway in case
@@ -525,6 +616,9 @@ static void gsnedf_task_new(struct task_struct * t, int on_rq, int running)
 	}
 	t->rt_param.linked_on          = NO_CPU;
 
+	// Debugging
+	printk("New subtask: %d.\n", t->pid);
+
 	gsnedf_job_arrival(t);
 	raw_spin_unlock_irqrestore(&gsnedf_lock, flags);
 }
@@ -535,6 +629,9 @@ static void gsnedf_task_wake_up(struct task_struct *task)
 	lt_t now;
 
 	TRACE_TASK(task, "wake_up at %llu\n", litmus_clock());
+
+	// Debugging
+	printk("Subtask: %d wake up.\n", task->pid);
 
 	raw_spin_lock_irqsave(&gsnedf_lock, flags);
 	/* We need to take suspensions because of semaphores into
@@ -558,6 +655,8 @@ static void gsnedf_task_wake_up(struct task_struct *task)
 			}
 		}
 	}
+
+	printk("Subtask: %d woke up.\n", task->pid);
 	gsnedf_job_arrival(task);
 	raw_spin_unlock_irqrestore(&gsnedf_lock, flags);
 }
@@ -571,6 +670,11 @@ static void gsnedf_task_block(struct task_struct *t)
 	/* unlink if necessary */
 	raw_spin_lock_irqsave(&gsnedf_lock, flags);
 	unlink(t);
+	/* Refresh schedulable subtask list for dependent tasks and transfer the tasks which are waiting in the release queue to ready queue */
+	if (!independentSubTask(t)) {
+		printk("Subtask: %d blocked.\n", t->pid);
+//		delAndUpdateDepSubtaskStructures(t);
+	}
 	raw_spin_unlock_irqrestore(&gsnedf_lock, flags);
 
 	BUG_ON(!is_realtime(t));
@@ -587,6 +691,12 @@ static void gsnedf_task_exit(struct task_struct * t)
 	if (tsk_rt(t)->scheduled_on != NO_CPU) {
 		gsnedf_cpus[tsk_rt(t)->scheduled_on]->scheduled = NULL;
 		tsk_rt(t)->scheduled_on = NO_CPU;
+	}
+
+	/* Refresh schedulable subtask list for dependent tasks and transfer the tasks which are waiting in the release queue to ready queue */
+	if (!independentSubTask(t)) {
+		printk("Subtask: %d exited.\n", t->pid);
+		delAndUpdateDepSubtaskStructures(t);
 	}
 	raw_spin_unlock_irqrestore(&gsnedf_lock, flags);
 
@@ -808,6 +918,10 @@ static struct sched_plugin gsn_edf_plugin __cacheline_aligned_in_smp = {
 
 static int __init init_gsn_edf(void)
 {
+	/* Initialize Dependent Schedulable Substask List*/
+	INIT_LIST_HEAD(&sched_dep_subtask_list);
+	INIT_LIST_HEAD(&dep_subtask_wait_list);
+
 	int cpu;
 	cpu_entry_t *entry;
 

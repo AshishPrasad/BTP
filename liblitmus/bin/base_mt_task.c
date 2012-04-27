@@ -27,23 +27,49 @@
 /* Let's create 10 threads in the example, 
  * for a total utilization of 1.
  */
-#define NUM_THREADS      10 
+#define NUM_THREADS      10
 
 /* The information passed to each thread. Could be anything. */
 struct thread_context {
 	int id;
 };
 
+// global variable to keep count of threads which are yet to obtain their pid
+int remaining_threads_count = NUM_THREADS;
+
+// constraints are set if its value is 1
+int constraints_set = -1;
+
+// condtion variable
+pthread_cond_t count_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t constraints_cond = PTHREAD_COND_INITIALIZER;
+
+// lock variable
+static pthread_mutex_t count_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t constraints_lock = PTHREAD_MUTEX_INITIALIZER;
+
+
+// Constraint Task
+struct thread_context set_ctx;
+pthread_t      set_ctx_task;
+
+// Global Data Structure to store thread pids.
+pid_t thread_pid[NUM_THREADS];
+pid_t main_thread_pid;
+
 /* The real-time thread program. Doesn't have to be the same for
  * all threads. Here, we only have one that will invoke job().
  */
 void* rt_thread(void *tcontext);
 
+// Thread to set constraints
+void* set_constraint_thread(void* context);
+
 /* Declare the periodically invoked job. 
  * Returns 1 -> task should exit.
  *         0 -> task should continue.
  */
-int job(void);
+int job(int thread_id);
 
 
 /* Catch errors.
@@ -89,8 +115,19 @@ int main(int argc, char** argv)
 	 */
 	init_litmus();
 
+	// For Dependent Tasks
+	// Obtain the main thread pid
+	main_thread_pid = gettid();
+	printf("Main thread PID: %d \n", main_thread_pid);
 
-	/***** 
+	// Syscall to intialize task pid at kernel
+	CALL(init_dep_task(main_thread_pid));
+
+	// Create the set constraint thread to specify the constraints.
+	set_ctx.id = NUM_THREADS;
+	pthread_create(&set_ctx_task, NULL, set_constraint_thread, (void *) (set_ctx_task));
+
+	/*****
 	 * 4) Launch threads.
 	 */
 	for (i = 0; i < NUM_THREADS; i++) {
@@ -98,17 +135,22 @@ int main(int argc, char** argv)
 		pthread_create(task + i, NULL, rt_thread, (void *) (ctx + i));
 	}
 
-	
+
 	/*****
 	 * 5) Wait for RT threads to terminate.
 	 */
 	for (i = 0; i < NUM_THREADS; i++)
 		pthread_join(task[i], NULL);
-	
+
+//	pthread_join(set_ctx_task, NULL);
 
 	/***** 
 	 * 6) Clean up, maybe print results and stats, and exit.
 	 */
+
+	// Syscall for exiting dependepent task
+	CALL(exit_dep_task(main_thread_pid));
+
 	return 0;
 }
 
@@ -120,8 +162,8 @@ int main(int argc, char** argv)
  */
 void* rt_thread(void *tcontext)
 {
-	int do_exit;
 	struct thread_context *ctx = (struct thread_context *) tcontext;
+	int do_exit;
 
 	/* Make presence visible. */
 	printf("RT Thread %d active.\n", ctx->id);
@@ -130,17 +172,41 @@ void* rt_thread(void *tcontext)
 	 * 1) Initialize real-time settings.
 	 */
 	CALL( init_rt_thread() );
-	CALL( sporadic_global(EXEC_COST, PERIOD) );
+	CALL( sporadic_global_dependent(EXEC_COST, PERIOD) );
+
+	// For Dependent Tasks
+	pthread_mutex_lock(&count_lock);
+		// Syscall to obtain the pid
+		thread_pid[ctx->id] = gettid();
+		printf("Thread id: %d PID: %d \n",ctx->id, thread_pid[ctx->id]);
+
+		// Syscall to link main thread task to the subtask at kernel
+		CALL(set_main_task_pid(thread_pid[ctx->id], main_thread_pid));
+
+		// Syscall to add the subtask to dependent task list at kernel
+		CALL(init_dep_subtask(thread_pid[ctx->id]));
+
+	pthread_mutex_unlock(&count_lock);
+
+	// Signal the set constraints thread to specify constraints
+	if (--remaining_threads_count == 0) {
+		pthread_cond_signal(&count_cond);
+	}
+
+	// Wait for the set constraints thread to specify the constraints and dependencies
+	pthread_mutex_lock(&constraints_lock);
+	while (constraints_set < 0) {
+		pthread_cond_wait(&constraints_cond, &constraints_lock);
+	}
+	pthread_mutex_unlock(&constraints_lock);
 
 	/*****
 	 * 2) Transition to real-time mode.
 	 */
 	CALL( task_mode(LITMUS_RT_TASK) );
 
-	/* The task is now executing as a real-time task if the call didn't fail. 
+	/* The task is now executing as a real-time task if the call didn't fail.
 	 */
-
-
 
 	/*****
 	 * 3) Invoke real-time jobs.
@@ -149,11 +215,11 @@ void* rt_thread(void *tcontext)
 		/* Wait until the next job is released. */
 		sleep_next_period();
 		/* Invoke job. */
-		do_exit = job();		
+		do_exit = job(ctx->id);
 	} while (!do_exit);
 
 
-	
+
 	/*****
 	 * 4) Transition to background mode.
 	 */
@@ -163,12 +229,47 @@ void* rt_thread(void *tcontext)
 	return NULL;
 }
 
+// Specify constraints:
+void* set_constraint_thread(void *context) {
+
+	// Wait for the threads to obtain their pids
+	pthread_mutex_lock(&count_lock);
+		while (remaining_threads_count > 0) {
+			pthread_cond_wait(&count_cond, &count_lock);
+		}
+	pthread_mutex_unlock(&count_lock);
+
+//	pthread_mutex_lock(&constraints_lock);
+
+	// Specify Constraints
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[3], thread_pid[4], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[3], thread_pid[5], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[3], thread_pid[7], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[4], thread_pid[8], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[4], thread_pid[2], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[5], thread_pid[2], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[7], thread_pid[9], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[8], thread_pid[6], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[2], thread_pid[1], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[2], thread_pid[0], main_thread_pid));
+	CALL(add_parent_to_subtask_in_main_task(thread_pid[9], thread_pid[0], main_thread_pid));
+
+	// Signal the threads to resume their operation
+	constraints_set = 1;
+	pthread_cond_broadcast(&constraints_cond);
+
+//	pthread_mutex_unlock(&constraints_lock);
+	return NULL;
+}
 
 
-int job(void) 
+int job(int thread_id)
 {
 	/* Do real-time calculation. */
+	printf("\nExecuting job: (%d, %d).\n", thread_id, thread_pid[thread_id]);
 
 	/* Don't exit. */
-	return 0;
+	// return 0;
+
+	return 1;
 }

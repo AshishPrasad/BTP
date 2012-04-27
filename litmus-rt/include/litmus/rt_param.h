@@ -36,6 +36,7 @@ typedef enum {
 struct rt_task {
 	lt_t 		exec_cost;
 	lt_t 		period;
+	lt_t 		subtask_period;		/*For Dependent Tasks*/
 	lt_t		phase;
 	unsigned int	cpu;
 	task_class_t	cls;
@@ -78,6 +79,8 @@ struct rt_job {
 	lt_t	release;
 	/* What is the current deadline? */
 	lt_t   	deadline;
+	/* Task Deadline for dependent tasks*/
+	lt_t    deadline_task;
 
 	/* How much service has this job received so far? */
 	lt_t	exec_time;

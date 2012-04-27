@@ -9,7 +9,8 @@
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-
+#include <linux/list.h>
+#include <litmus/MyRTTaskList.h>
 #include <litmus/litmus.h>
 #include <litmus/bheap.h>
 #include <litmus/trace.h>
@@ -274,6 +275,194 @@ asmlinkage long sys_null_call(cycles_t __user *ts)
 	return ret;
 }
 
+/****************************For Dependent Tasks Only***************************/
+/**
+ * Initialize Task in Dependent Task List
+ */
+asmlinkage long sys_init_dep_task(pid_t main_task_pid)
+{
+	printk("Initializing rt dependent task %d in dependency task list.\n", main_task_pid);
+
+	int retval = -EINVAL;
+
+	if (main_task_pid < 0) {
+		goto out;
+	}
+
+	/* Task search must be protected */
+	read_lock_irq(&tasklist_lock);
+
+	if (!find_task_by_vpid(main_task_pid)) {
+		printk("Cannot find main task: %d.\n", main_task_pid);
+		retval = -ESRCH;
+		goto out_unlock;
+	}
+
+	if (initializeTaskInDepTaskList(main_task_pid)) {
+		retval = 0;
+	}
+
+		out_unlock:
+	read_unlock_irq(&tasklist_lock);
+	    	out:
+	return retval;
+}
+
+/**
+ * Link main_task_pid to subtask
+ */
+asmlinkage long sys_set_main_task_pid(pid_t subtask_pid, pid_t main_task_pid)
+{
+	printk("Setting up dependent rt task constraints for subtask %d belonging to main task %d.\n", subtask_pid, main_task_pid);
+	struct task_struct *target;
+	int retval = -EINVAL;
+	if (subtask_pid < 0 || main_task_pid < 0) {
+		goto out;	}
+
+	/* Task search and manipulation must be protected */
+	read_lock_irq(&tasklist_lock);
+	if (!(target = find_task_by_vpid(subtask_pid))){
+		printk("Cannot find subtask: %d.\n", subtask_pid);
+		retval = -ESRCH;
+		goto out_unlock;	}
+	if  (!(find_task_by_vpid(main_task_pid))) {
+		printk("Cannot find main task: %d.\n", main_task_pid);
+		retval = -ESRCH;
+		goto out_unlock;	}
+	if (is_realtime(target)) {
+		/* The task is already a real-time task.
+		 * We cannot not allow parameter changes at this point.
+		 */
+		printk("The subtask: %d is real time.\n", subtask_pid);
+		retval = -EBUSY;
+		goto out_unlock;	}
+	target->main_task_pid = main_task_pid;
+	retval = 0;
+      out_unlock:
+	read_unlock_irq(&tasklist_lock);
+      out:
+	return retval;
+}
+
+/**
+ * Initialize SubTask in Dependent Task List
+ */
+asmlinkage long sys_init_dep_subtask(pid_t subtask_pid)
+{
+	printk("Initializing rt dependent subtask %d in dependency task list.\n", subtask_pid);
+
+	int retval = -EINVAL;
+
+	struct task_struct * target;
+
+	if (subtask_pid < 0) {
+		goto out;
+	}
+
+	/* Task search must be protected */
+	read_lock_irq(&tasklist_lock);
+
+	if (!(target = find_task_by_vpid(subtask_pid))) {
+		printk("Cannot find subtask: %d.\n", subtask_pid);
+		retval = -ESRCH;
+		goto out_unlock;
+	}
+
+	if (is_realtime(target)) {
+		/* The task is already a real-time task.
+		 * We cannot not allow parameter changes at this point.
+		 */
+		printk("The subtask: %d is real time.\n", subtask_pid);
+		retval = -EBUSY;
+		goto out_unlock;
+	}
+
+	if (addSubtaskToDepTaskList(subtask_pid, target)) {
+		retval = 0;
+	}
+
+	out_unlock:
+	read_unlock_irq(&tasklist_lock);
+    	out:
+	return retval;
+}
+
+/**
+ * Syscall to add constraints
+ */
+asmlinkage long sys_add_parent_to_subtask(pid_t parent_pid, pid_t subtask_pid, pid_t main_task_pid)
+{
+	printk("Adding parent : %d to subtask : %d in main task: %d.\n", parent_pid, subtask_pid, main_task_pid);
+
+	struct task_struct *parent;
+	struct task_struct *subtask;
+
+	int retval = -EINVAL;
+
+	if (parent_pid < 0 || subtask_pid < 0 || main_task_pid < 0) {
+		printk("Parent/Subtask/Main task pid is invalid (less than 0).\n");
+		goto out;
+	}
+
+	parent  = FindSubtaskInMainTask(parent_pid,  main_task_pid);
+	subtask = FindSubtaskInMainTask(subtask_pid, main_task_pid);
+
+	if (!parent || !subtask) {
+		printk("Parent/Subtask/Main task pid is invalid.\n");
+		goto out;
+	}
+
+	if (is_realtime(parent) || is_realtime(subtask)) {
+		/* The task is already a real-time task.
+		 * We cannot not allow parameter changes at this point.
+		 */
+		printk("The parent: %d or subtask: %d is real time.\n", parent_pid, subtask_pid);
+		retval = -EBUSY;
+		goto out;
+	}
+
+	if (addParentToSubtaskInDepTaskList(parent, subtask)) {
+		retval = 0;
+	}
+
+	  out:
+	return retval;
+}
+
+/**
+ * Delete Task From Dependent Task List
+ */
+asmlinkage long sys_exit_dep_task(pid_t main_task_pid)
+{
+	printk("Deleting dependent task %d in dependency task list.\n", main_task_pid);
+
+	int retval = -EINVAL;
+
+	if (main_task_pid < 0) {
+		printk("Dependent task %d is invalid (less than 0).\n", main_task_pid);
+		goto out;
+	}
+
+	/* Task search must be protected */
+	read_lock_irq(&tasklist_lock);
+
+	if (!find_task_by_vpid(main_task_pid)) {
+		printk("Cannot find main task: %d.\n", main_task_pid);
+		retval = -ESRCH;
+		goto out_unlock;
+	}
+
+	if (removeTaskFromDepTaskList(main_task_pid)) {
+		retval = 0;
+	}
+
+	out_unlock:
+	read_unlock_irq(&tasklist_lock);
+    	out:
+	return retval;
+}
+
+/*************************************************************************************************/
 /* p is a real-time task. Re-init its state as a best-effort task. */
 static void reinit_litmus_state(struct task_struct* p, int restore)
 {
@@ -533,6 +722,9 @@ static int __init _init_litmus(void)
 
 	init_litmus_proc();
 
+	// Initializing dependent task list
+	initializeDepTaskList();
+
 	return 0;
 }
 
@@ -541,6 +733,9 @@ static void _exit_litmus(void)
 	exit_litmus_proc();
 	kmem_cache_destroy(bheap_node_cache);
 	kmem_cache_destroy(release_heap_cache);
+
+	// Deleting dependent task list
+	deleteDepTaskList();
 }
 
 module_init(_init_litmus);
