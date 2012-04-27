@@ -3,7 +3,7 @@ Added changes to litmus-rt and liblitmus to schedule real time dependent tasks i
 Changes:
 
 liblitmus: 
--Dependent Tasks represented as DAG.
+-Dependent Tasks represented as Directed Acyclic Graph (DAG).
 
 litmus-rt:
 -Created data structure (3 level linked lists) to maintain the precedence constraints of the tasks.
